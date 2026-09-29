@@ -18,6 +18,8 @@ import { importFiles } from './lib/media';
 import { closeProject, createProjectFromFiles, initProjects, setDemoBeat } from './lib/projects';
 import { loadEditFonts } from './lib/textEngine';
 import { totalDuration, layoutClips, clipAtTime } from './lib/velocity';
+import { animatedValue } from './lib/keyframes';
+import { CLIP_PROPS } from './types';
 import { clamp } from './lib/utils';
 
 let booted = false;
@@ -87,6 +89,21 @@ function useShortcuts() {
         st.setTime(Math.round((st.time + d) * fps) / fps);
       } else if (e.key === 'Home') st.setTime(0);
       else if (e.key === 'End') st.setTime(totalDuration(st.project.clips));
+      else if (!mod && (e.key === '[' || e.key === ']')) {
+        const target = st.targetClip();
+        if (!target) return;
+        const step = e.shiftKey ? 15 : 1;
+        const cur = animatedValue(target.clip.keyframes, CLIP_PROPS[3], target.u, target.clip.rotation);
+        st.setTransform({ rotation: cur + (e.key === ']' ? step : -step) });
+        st.toast(`Rotate ${e.key === ']' ? '+' : '−'}${step}°`, 'info');
+      } else if (!mod && (e.key === ',' || e.key === '.')) {
+        const target = st.targetClip();
+        if (!target) return;
+        const step = e.shiftKey ? 0.01 : 0.05;
+        const cur = animatedValue(target.clip.keyframes, CLIP_PROPS[0], target.u, target.clip.scale);
+        st.setTransform({ scale: cur * (1 + (e.key === '.' ? step : -step)) });
+        st.toast(`Zoom ${e.key === '.' ? '+' : '−'}${Math.round(step * 100)}%`, 'info');
+      } else if (!mod && e.key === '0') st.resetTransform();
       else if (!mod && (k === 'r' || k === 't')) {
         const id = st.selection?.kind === 'clip' ? st.selection.id : clipAtTime(layoutClips(st.project.clips), st.time)?.clip.id;
         const c = st.project.clips.find((x) => x.id === id);

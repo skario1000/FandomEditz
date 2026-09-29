@@ -1,12 +1,16 @@
 import { create } from 'zustand';
 import type { Clip, FxItem, MediaItem, MusicTrack, ParamValue, Project, Selection } from './types';
+import { CLIP_PROPS } from './types';
 import { clamp, uid } from './lib/utils';
-import { clipAtTime, layoutClips, nearestCut, splitClip, totalDuration } from './lib/velocity';
+import { clipAtTime, clipDuration, layoutClips, nearestCut, splitClip, totalDuration } from './lib/velocity';
 import { COMBOS, FX_DEFS, LIB_BY_ID, defaultParams } from './lib/effects';
 import { defaultColor } from './lib/colorPresets';
-import { audio, detectBeats } from './lib/audio';
+import { audio, detectBeats, ensureMusicAnalysis } from './lib/audio';
 import { scheduleAutosave } from './lib/storage';
 import { getMusicClips, splitMusicClip, syncMusicProject } from './lib/music';
+import { clampRot, clampScale, transformChanges, type TProp } from './lib/transform';
+import { MOVE_BY_ID, presetToClip } from './lib/moves';
+import { animatedValue } from './lib/keyframes';
 
 export const LANES = 3;
 const MAX_HISTORY = 120;
@@ -77,6 +81,8 @@ interface UIState {
   srcOut: number;
   thumbVersion: number;
   quality: 'full' | 'half';
+  gizmo: boolean;
+  guides: 'off' | 'thirds' | 'safe';
   exportOpen: boolean;
   exporting: boolean;
   helpOpen: boolean;
@@ -124,6 +130,12 @@ export interface EditorState extends UIState {
   insertIndexAtTime(t: number): number;
   updateClip(id: string, patch: Partial<Clip>, live?: boolean): void;
   patchTargetClips(fn: (c: Clip) => Partial<Clip>, all?: boolean): void;
+  /** The clip a transform edit applies to: the selection, else the one under the playhead. */
+  targetClip(): { clip: Clip; start: number; dur: number; u: number } | null;
+  /** Write scale / position / rotation, keyframing it when the property is animated. */
+  setTransform(changes: Partial<Record<TProp, number>>, opts?: { live?: boolean; clipId?: string }): void;
+  applyMove(presetId: string): void;
+  resetTransform(): void;
   moveClip(from: number, to: number): void;
   removeSelected(): void;
   duplicateSelected(): void;
@@ -197,6 +209,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   srcOut: 0,
   thumbVersion: 0,
   quality: 'full',
+  gizmo: true,
+  guides: 'off',
   exportOpen: false,
   exporting: false,
   helpOpen: false,
@@ -343,6 +357,51 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({ selection: { kind: 'clip', id } });
     }
     get().commit((p) => ({ ...p, clips: p.clips.map((c) => (ids.includes(c.id) ? { ...c, ...fn(c) } : c)) }));
+  },
+  targetClip: () => {
+    const s = get();
+    const layout = layoutClips(s.project.clips);
+    const hit =
+      (s.selection?.kind === 'clip' ? layout.find((l) => l.clip.id === s.selection!.id) : undefined) ?? clipAtTime(layout, s.time);
+    if (!hit) return null;
+    const dur = Math.max(0.05, clipDuration(hit.clip));
+    return { clip: hit.clip, start: hit.start, dur, u: clamp((s.time - hit.start) / dur, 0, 1) };
+  },
+  setTransform: (changes, opts) => {
+    const s = get();
+    const hit = (opts?.clipId ? s.project.clips.find((c) => c.id === opts.clipId) : null) ?? s.targetClip()?.clip;
+    if (!hit) return;
+    const layout = layoutClips(s.project.clips);
+    const slot = layout.find((l) => l.clip.id === hit.id);
+    const dur = Math.max(0.05, clipDuration(hit));
+    const u = slot ? clamp((s.time - slot.start) / dur, 0, 1) : 0;
+    const clean: Partial<Record<TProp, number>> = {};
+    for (const [k, v] of Object.entries(changes) as [TProp, number][]) {
+      if (v === undefined) continue;
+      clean[k] = k === 'scale' ? clampScale(v) : k === 'rotation' ? clampRot(v) : clamp(v, -3, 3);
+    }
+    s.updateClip(hit.id, transformChanges(hit, clean, u), opts?.live);
+  },
+  applyMove: (presetId) => {
+    const s = get();
+    const preset = MOVE_BY_ID.get(presetId);
+    const hit = s.targetClip();
+    if (!preset || !hit) {
+      s.toast('Add a clip to the timeline first', 'info');
+      return;
+    }
+    const from: Partial<Record<TProp, number>> = {};
+    for (const p of CLIP_PROPS) from[p.id as TProp] = animatedValue(hit.clip.keyframes, p, hit.u, (hit.clip as unknown as Record<string, number>)[p.id]);
+    s.updateClip(hit.clip.id, presetToClip(hit.clip, preset, from, hit.dur));
+    s.select({ kind: 'clip', id: hit.clip.id });
+    s.toast(`${preset.icon} ${preset.name} — edit the curve in Keyframes`, 'success');
+  },
+  resetTransform: () => {
+    const s = get();
+    const hit = s.targetClip();
+    if (!hit) return;
+    s.updateClip(hit.clip.id, transformChanges(hit.clip, { scale: 1, posX: 0, posY: 0, rotation: 0 }, hit.u));
+    s.toast('Transform reset', 'info');
   },
   moveClip: (from, to) =>
     get().commit((p) => {
@@ -607,6 +666,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       beats: mediaId === p.music?.mediaId ? p.beats : [],
     }));
     if (mediaId && shouldDetect) void autoMarkBeats(mediaId);
+    if (mediaId) void ensureMusicAnalysis(mediaId);
   },
   updateMusic: (patch, live) => {
     const fn = (p: Project) => {

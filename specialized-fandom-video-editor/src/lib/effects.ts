@@ -3,6 +3,7 @@ import { clamp, ease, hash1, hashStr, hexToRgb, noise1 } from './utils';
 import { evalTrack, trackFor } from './keyframes';
 import { cubicBezier } from './bezier';
 import { FONT_DEFS, FONT_OPTS, type TextLayer } from './textEngine';
+import { bandEnergy, type Band } from './audio';
 
 /* ------------------------------------------------------------------ */
 /* Affine helpers: [a, b, c, d, e, f] -> x' = a x + c y + e, y' = b x + d y + f */
@@ -80,6 +81,8 @@ export interface FxState {
   lens: number;
   lensCx: number;
   lensCy: number;
+  /** Multiplied over the graded image — used by the fake 3D spin's back face. */
+  shade: number;
   texts: TextOverlay[];
 }
 
@@ -119,6 +122,7 @@ export function newFxState(aspect: number): FxState {
     lens: 0,
     lensCx: 0.5,
     lensCy: 0.5,
+    shade: 1,
     texts: [],
   };
 }
@@ -145,6 +149,31 @@ export function geoRotate(s: FxState, r: number, cx = 0.5, cy = 0.5) {
 export function geoTranslate(s: FxState, tx: number, ty: number) {
   s.geo = affMul(affT(tx * s.aspect, ty), s.geo);
 }
+
+/**
+ * Fake 3D yaw: the frame spins about its vertical axis by squeezing
+ * horizontally to cos(a) and mirroring on the back face, with the back face
+ * darkened. This is the "3D spin" every fandom edit uses — a real camera
+ * would need perspective, but a plane only needs the squeeze to read as one.
+ */
+export function geoYaw(s: FxState, a: number, cx = 0.5, cy = 0.5) {
+  const px = cx * s.aspect;
+  const c = Math.cos(a);
+  const back = c < 0;
+  const sx = (back ? -1 : 1) * Math.max(0.035, Math.abs(c));
+  s.geo = affMul(affMul(affT(px, cy), affMul(affS(sx, 1), affT(-px, -cy))), s.geo);
+  if (Math.abs(c) < 0.985) s.shade *= 0.34 + 0.66 * Math.abs(c);
+}
+
+/** Multiply a shading factor over everything already applied. */
+export function addShade(s: FxState, m: number) {
+  s.shade *= clamp(m, 0, 1.4);
+}
+
+/** Energy of the project's music — 0 when there is no track under this moment. */
+export function musicEnergy(c: FxCtx, band: Band, smooth: number, floor: number): number {
+  return bandEnergy(c.musicId, band, c.musicT ?? c.T, smooth, floor);
+}
 export function addFlash(s: FxState, r: number, g: number, b: number, a: number) {
   a = clamp(a, 0, 1);
   if (a <= 0.001) return;
@@ -166,7 +195,7 @@ function addRadial(s: FxState, amount: number, cx: number, cy: number) {
 /* ------------------------------------------------------------------ */
 /* Definitions                                                         */
 /* ------------------------------------------------------------------ */
-export type FxCategory = 'zoom' | 'transition' | 'motion' | 'light' | 'glitch' | 'time' | 'text';
+export type FxCategory = 'zoom' | 'rotate' | 'transition' | 'motion' | 'light' | 'glitch' | 'time' | 'audio' | 'text';
 
 export type ParamDef = (
   | { key: string; label: string; type: 'range'; min: number; max: number; step: number; def: number }
@@ -188,6 +217,10 @@ export interface FxCtx {
   T: number;
   beats: number[];
   start: number;
+  /** Media id of the project's music track — drives the music-reactive effects. */
+  musicId?: string | null;
+  /** Position inside that track, so a trimmed or offset song still lines up. */
+  musicT?: number;
 }
 
 export interface FxDef {
@@ -205,11 +238,13 @@ export interface FxDef {
 
 export const FX_CATS: { id: FxCategory; name: string; color: string }[] = [
   { id: 'zoom', name: 'Zooms', color: '#22d3ee' },
+  { id: 'rotate', name: 'Rotate & 3D', color: '#c084fc' },
   { id: 'transition', name: 'Transitions', color: '#a78bfa' },
   { id: 'motion', name: 'Shake & Motion', color: '#fb923c' },
   { id: 'light', name: 'Flash & Light', color: '#facc15' },
   { id: 'glitch', name: 'Glitch & Stylize', color: '#f472b6' },
   { id: 'time', name: 'Time FX', color: '#4ade80' },
+  { id: 'audio', name: 'Music Reactive', color: '#34d399' },
   { id: 'text', name: 'Text', color: '#e5e7eb' },
 ];
 export const catColor = (c: FxCategory) => FX_CATS.find((x) => x.id === c)?.color ?? '#888';
@@ -288,6 +323,13 @@ const ENV_OPTS: [string, string][] = [
   ['fadeOut', 'Fade out'],
   ['fadeIn', 'Fade in'],
   ['bell', 'In & out'],
+];
+const BAND_OPTS: [string, string][] = [
+  ['bass', 'Bass / kick'],
+  ['mid', 'Mid / vocal'],
+  ['high', 'Hi-hats / air'],
+  ['full', 'Whole mix'],
+  ['hit', 'Hits / transients'],
 ];
 const CENTER = [r('cx', 'Center X', 0, 1, 0.01, 0.5), r('cy', 'Center Y', 0, 1, 0.01, 0.5)];
 
@@ -679,6 +721,215 @@ const defs: FxDef[] = [
     dur: 2.8,
     params: [r('amount', 'Amount', 0.02, 0.5, 0.01, 0.14), r('rise', 'Rise', 0, 1.5, 0.01, 0.8), r('blur', 'Zoom blur', 0, 1.5, 0.05, 0.15), ...CENTER],
     apply: (s, c) => applyZoom(s, c, zoomTo(num(c, 'amount', 0.14) * c.k, 'in', Z.silk)),
+  },
+
+  /* ------------------------- ROTATE & ZOOM --------------------------- */
+  {
+    type: 'spinZoom',
+    name: 'Spin Zoom',
+    cat: 'rotate',
+    icon: '🌀',
+    desc: 'The move. The frame winds a full 360° roll while it pushes in, then unwinds back to level. The shutter smears the rotation so it reads as one continuous spin, not a cut.',
+    dur: 0.8,
+    params: [
+      r('amount', 'Zoom', 0.05, 1.2, 0.01, 0.38),
+      r('turns', 'Turns', 0.25, 3, 0.25, 1),
+      sel('dir', 'Spin', [['cw', 'Clockwise'], ['ccw', 'Counter-clockwise']], 'cw'),
+      sel('ease', 'Rotation easing', EASE_OPTS, 'expo'),
+      r('blur', 'Zoom blur', 0, 4, 0.05, 1.4),
+      ...CENTER,
+    ],
+    apply: (s, c) => {
+      const dir = str(c, 'dir', 'cw') === 'cw' ? 1 : -1;
+      const spin = num(c, 'turns', 1) * Math.PI * 2 * dir * c.k;
+      geoRotate(s, spin * zEase(str(c, 'ease', 'expo'), c.p));
+      applyZoom(s, c, (q) => expZoom(1, 1 + num(c, 'amount', 0.38) * c.k, Z.good(q)));
+    },
+  },
+  {
+    type: 'dutchZoom',
+    name: 'Dutch Zoom',
+    cat: 'rotate',
+    icon: '🎬',
+    desc: 'Tips into a dutch angle while pushing in, holds the tilt, then levels out. Land the level-off on the beat and the frame snaps square again.',
+    dur: 0.9,
+    params: [
+      r('angle', 'Tilt', -45, 45, 0.5, 14),
+      r('amount', 'Zoom', 0.05, 1.2, 0.01, 0.3),
+      sel('dir', 'Zoom', [['in', 'Push in'], ['out', 'Pull out']], 'in'),
+      r('hold', 'Hold the tilt', 0, 0.6, 0.01, 0.18),
+      r('blur', 'Zoom blur', 0, 4, 0.05, 1.2),
+      ...CENTER,
+    ],
+    apply: (s, c) => {
+      const hold = clamp(num(c, 'hold', 0.18), 0, 0.9);
+      const half = Math.max(0.02, (1 - hold) / 2);
+      const q = c.p < half ? Z.snap(c.p / half) : c.p < half + hold ? 1 : Z.silk((c.p - half - hold) / half);
+      geoRotate(s, ((num(c, 'angle', 14) * Math.PI) / 180) * clamp(q, 0, 1) * c.k);
+      applyZoom(s, c, zoomTo(num(c, 'amount', 0.3) * c.k, str(c, 'dir', 'in'), Z.good));
+    },
+  },
+  {
+    type: 'orbitZoom',
+    name: 'Orbit Zoom',
+    cat: 'rotate',
+    icon: '🛰️',
+    desc: 'A pendulum swing: the clip leans one way, sweeps through level and out the other while pushing in. Sells a camera arcing around the subject.',
+    dur: 0.85,
+    params: [
+      r('angle', 'Swing', -40, 40, 0.5, 18),
+      r('cycles', 'Swings', 0.5, 4, 0.5, 1),
+      r('amount', 'Zoom', 0.02, 0.8, 0.01, 0.22),
+      r('blur', 'Zoom blur', 0, 3, 0.05, 0.9),
+      ...CENTER,
+    ],
+    apply: (s, c) => {
+      const a = ((num(c, 'angle', 18) * Math.PI) / 180) * c.k;
+      geoRotate(s, a * Math.sin(Math.PI * num(c, 'cycles', 1) * c.p) * Z.silk(c.p));
+      applyZoom(s, c, zoomTo(num(c, 'amount', 0.22) * c.k, 'in', Z.silk));
+    },
+  },
+  {
+    type: 'ySpin',
+    name: '3D Spin',
+    cat: 'rotate',
+    icon: '🧊',
+    desc: 'The frame spins about its vertical axis: it narrows edge-on, flips through the back of itself and lands facing front. The back face is darkened so the flip reads as a real object turning.',
+    dur: 0.6,
+    params: [
+      r('turns', 'Turns', 0.25, 2, 0.25, 1),
+      sel('dir', 'Spin', [['cw', 'Clockwise'], ['ccw', 'Counter-clockwise']], 'cw'),
+      sel('ease', 'Easing', EASE_OPTS, 'good'),
+      r('zoom', 'Zoom', 0, 0.8, 0.01, 0.12),
+      r('blur', 'Edge blur', 0, 3, 0.05, 0.8),
+      ...CENTER,
+    ],
+    apply: (s, c) => {
+      const dir = str(c, 'dir', 'cw') === 'cw' ? 1 : -1;
+      const a = num(c, 'turns', 1) * Math.PI * 2 * dir * c.k * zEase(str(c, 'ease', 'good'), c.p);
+      geoYaw(s, a, num(c, 'cx', 0.5), num(c, 'cy', 0.5));
+      applyZoom(s, c, (q) => 1 + num(c, 'zoom', 0.12) * c.k * Math.sin(Math.PI * q));
+    },
+  },
+  {
+    type: 'tiltRush',
+    name: 'Tilt Rush',
+    cat: 'rotate',
+    icon: '🔄',
+    desc: 'A long constant-rate rotation ramp under a silk push, for passages where the horizon keeps slowly tipping. Put it under a verse and let it drift.',
+    dur: 2.4,
+    params: [
+      r('rate', 'Degrees / sec', -180, 180, 1, 36),
+      r('amount', 'Zoom', 0.02, 0.8, 0.01, 0.2),
+      sel('ease', 'Easing', EASE_OPTS, 'silk'),
+      r('blur', 'Zoom blur', 0, 3, 0.05, 0.5),
+      ...CENTER,
+    ],
+    apply: (s, c) => {
+      geoRotate(s, ((num(c, 'rate', 36) * Math.PI) / 180) * c.dur * c.k * zEase(str(c, 'ease', 'silk'), c.p));
+      applyZoom(s, c, zoomTo(num(c, 'amount', 0.2) * c.k, 'in', Z.silk));
+    },
+  },
+  {
+    type: 'snapRotate',
+    name: 'Snap Rotate',
+    cat: 'rotate',
+    icon: '🧭',
+    desc: 'Whips off-level and back on one beat — a dutch angle for a single hit that does not need a full transition.',
+    dur: 0.45,
+    params: [
+      r('angle', 'Angle', -60, 60, 0.5, 18),
+      r('zoom', 'Zoom', 0, 0.8, 0.01, 0.16),
+      r('hold', 'Hold off-level', 0, 0.5, 0.01, 0.1),
+      r('blur', 'Zoom blur', 0, 4, 0.05, 1.6),
+      ...CENTER,
+    ],
+    apply: (s, c) => {
+      const h = clamp(num(c, 'hold', 0.1), 0, 0.9);
+      const half = Math.max(0.02, (1 - h) / 2);
+      const q = c.p < half ? Z.snap(c.p / half) : c.p < half + h ? 1 : Z.silk((c.p - half - h) / half);
+      geoRotate(s, ((num(c, 'angle', 18) * Math.PI) / 180) * clamp(q, 0, 1) * c.k);
+      applyZoom(s, c, zoomTo(num(c, 'zoom', 0.16) * c.k, 'in', Z.good));
+    },
+  },
+  {
+    type: 'rollTrans',
+    name: 'Barrel Roll',
+    cat: 'rotate',
+    icon: '🎳',
+    transition: true,
+    desc: 'A full roll through the cut: the outgoing frame rolls 360° and blows past the lens on its way into the next shot. Centre it on a cut.',
+    dur: 0.55,
+    params: [
+      r('turns', 'Turns', 0.5, 3, 0.25, 1),
+      r('zoom', 'Zoom through', 0, 2, 0.05, 0.9),
+      r('blur', 'Zoom blur', 0, 4, 0.05, 2.4),
+      r('lens', 'Lens bow', 0, 1, 0.01, 0.35),
+      ...CENTER,
+    ],
+    apply: (s, c) => {
+      const cx = num(c, 'cx', 0.5);
+      const cy = num(c, 'cy', 0.5);
+      const e = transCurve(c.p);
+      geoRotate(s, e * num(c, 'turns', 1) * Math.PI * 2 * c.k);
+      geoZoom(s, 1 + Math.abs(e) * num(c, 'zoom', 0.9) * c.k, cx, cy);
+      addRadial(s, Math.abs(e) * num(c, 'blur', 2.4) * 0.2 * c.k, cx, cy);
+      addLens(s, num(c, 'lens', 0.35) * c.k * (1 - Math.abs(e)), cx, cy);
+    },
+  },
+  {
+    type: 'rotateTrans',
+    name: 'Spin Through',
+    cat: 'rotate',
+    icon: '📽️',
+    transition: true,
+    desc: 'The zoom-through cut with the frame rolling as it travels: the outgoing shot spins away while the incoming one spins in. Centre it on a cut.',
+    dur: 0.5,
+    params: [
+      r('turns', 'Turns', 0.25, 2, 0.25, 0.5),
+      r('zoom', 'Zoom through', 0.2, 3, 0.05, 1.1),
+      r('blur', 'Zoom blur', 0, 4, 0.05, 2.2),
+      r('lens', 'Lens bow', 0, 1, 0.01, 0.3),
+      ...CENTER,
+    ],
+    apply: (s, c) => {
+      const cx = num(c, 'cx', 0.5);
+      const cy = num(c, 'cy', 0.5);
+      const e = transCurve(c.p);
+      geoRotate(s, e * num(c, 'turns', 0.5) * Math.PI * 2 * c.k);
+      geoZoom(s, 1 + Math.abs(e) * num(c, 'zoom', 1.1) * c.k, cx, cy);
+      addRadial(s, Math.abs(e) * num(c, 'blur', 2.2) * 0.2 * c.k, cx, cy);
+      addLens(s, num(c, 'lens', 0.3) * c.k * (1 - Math.abs(e)), cx, cy);
+    },
+  },
+
+  /* ------------------------- MUSIC REACTIVE -------------------------- */
+  {
+    type: 'bassPump',
+    name: 'Bass Pump',
+    cat: 'audio',
+    icon: '🎚️',
+    desc: 'The edit breathes with your track: zoom, shake and glow ride the low end. Baked from the audio itself, so the preview and the exported file match frame for frame. After Effects needs a plugin for this.',
+    dur: 6,
+    params: [
+      sel('band', 'Reacts to', BAND_OPTS, 'bass'),
+      r('zoom', 'Zoom pump', 0, 0.5, 0.01, 0.18),
+      r('shake', 'Shake', 0, 1, 0.01, 0.2),
+      r('glow', 'Glow pump', 0, 1, 0.01, 0.25),
+      r('response', 'Response', 0, 1, 0.01, 0.5),
+      r('floor', 'Base level', 0, 0.9, 0.01, 0.15),
+    ],
+    apply: (s, c) => {
+      const e = musicEnergy(c, str(c, 'band', 'bass') as Band, num(c, 'response', 0.5), num(c, 'floor', 0.15)) * c.k;
+      if (e <= 0.002) return;
+      geoZoom(s, 1 + num(c, 'zoom', 0.18) * e);
+      const sh = num(c, 'shake', 0.2) * e;
+      if (sh > 0.001) {
+        geoTranslate(s, noise1(c.T * 13, c.seed) * 0.011 * sh, noise1(c.T * 13, c.seed + 5) * 0.011 * sh);
+        geoRotate(s, noise1(c.T * 9, c.seed + 9) * 0.01 * sh);
+      }
+      s.glow += num(c, 'glow', 0.25) * e;
+    },
   },
 
   /* --------------------------- TRANSITIONS --------------------------- */
@@ -1612,6 +1863,19 @@ export const LIBRARY: LibEntry[] = [
   E('zoomBounce'),
   E('zoomBlur'),
   E('kenBurns'),
+  E('spinZoom', { hot: true }),
+  E('spinZoom', { id: 'spinZoomHalf', name: 'Half Spin Zoom', icon: '🌀', params: { turns: 0.5, amount: 0.3 }, desc: 'Half a barrel roll with a softer push — for cuts where a full turn is too much.' }),
+  E('spinZoom', { id: 'spinZoomTilt', name: 'Spin + Tilt Zoom', icon: '🌀', params: { turns: 0.75, amount: 0.45, ease: 'whip' } }),
+  E('dutchZoom', { hot: true }),
+  E('dutchZoom', { id: 'dutchZoomOut', name: 'Dutch Pull', icon: '🎬', params: { angle: -18, amount: 0.32, dir: 'out' }, desc: 'The dutch tilt on a pull-out — the frame tips away and levels as it recedes.' }),
+  E('orbitZoom'),
+  E('ySpin', { hot: true }),
+  E('ySpin', { id: 'ySpinHalf', name: '3D Spin · Half', icon: '🧊', params: { turns: 0.5 } }),
+  E('tiltRush'),
+  E('snapRotate'),
+  E('rollTrans', { hot: true }),
+  E('rotateTrans'),
+  E('bassPump'),
   E('zoomTrans', { hot: true }),
   E('zoomTrans', { id: 'zoomTransBig', name: 'Hard Zoom Through', icon: '🌀', params: { amount: 1.35, blur: 2.8 }, desc: 'The same smooth through-cut, just much bigger. For drops.' }),
   E('spinTrans'),
@@ -1749,6 +2013,29 @@ export const COMBOS: Combo[] = [
       { type: 'shake', offset: 0, dur: 2, params: { amount: 0.12, freq: 6 } },
     ],
   },
+  {
+    id: 'spinDrop',
+    name: 'Spin Drop',
+    icon: '🌀',
+    desc: 'A full barrel-roll zoom, white flash and a shake that decays out of the hit.',
+    items: [
+      { type: 'spinZoom', offset: 0, dur: 0.7, params: { amount: 0.55, turns: 1, blur: 2.4 } },
+      { type: 'flash', offset: 0, dur: 0.22, params: { color: '#ffffff', amount: 0.8 } },
+      { type: 'impact', offset: 0, dur: 0.6, params: { amount: 0.5 } },
+      { type: 'rgbSplit', offset: 0, dur: 0.3, params: { amount: 16 } },
+    ],
+  },
+  {
+    id: 'dutchHero',
+    name: 'Dutch Hero',
+    icon: '🎬',
+    desc: 'Slow tilt into a dutch angle, a silk push, and a landing that levels out square.',
+    items: [
+      { type: 'dutchZoom', offset: 0, dur: 1.2, params: { angle: 16, amount: 0.3, blur: 0.8 } },
+      { type: 'grain', offset: 0, dur: 1.2, params: { amount: 0.18 } },
+      { type: 'vignette', offset: 0, dur: 1.2, params: { amount: 0.45 } },
+    ],
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -1774,7 +2061,7 @@ function sorted(items: FxItem[]) {
   return s;
 }
 
-export function evaluateFx(items: FxItem[], T: number, beats: number[], s: FxState) {
+export function evaluateFx(items: FxItem[], T: number, beats: number[], s: FxState, musicId?: string | null, musicT?: number) {
   for (const fx of sorted(items)) {
     if (T < fx.start || T >= fx.start + fx.duration) continue;
     const def = FX_DEFS[fx.type];
@@ -1805,6 +2092,8 @@ export function evaluateFx(items: FxItem[], T: number, beats: number[], s: FxSta
       T,
       beats,
       start: fx.start - phaseStart,
+      musicId,
+      musicT,
     });
   }
 }

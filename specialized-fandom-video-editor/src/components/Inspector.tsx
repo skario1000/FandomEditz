@@ -7,12 +7,15 @@ import { FX_CATS, FX_DEFS, catColor, type ParamDef } from '../lib/effects';
 import { VELOCITY_PRESETS, clipDuration, totalDuration, layoutClips } from '../lib/velocity';
 import { COLOR_PRESETS, colorFromPreset, defaultColor } from '../lib/colorPresets';
 import { animatedValue, hasTrack, removeTrack, setKeyframe, trackFor, upsertTrack } from '../lib/keyframes';
+import { MOVE_PRESETS } from '../lib/moves';
 import { thumbs } from '../lib/media';
 import { getMusicClips, syncMusicProject } from '../lib/music';
 import { fmtSec, clamp } from '../lib/utils';
 import { VelocityCurve } from './Curve';
 import { Btn, Chip, NumField, Section, Seg, Select, Slider, Toggle } from './ui';
 import { KeyframeEditor } from './KeyframeEditor';
+import { BandMeter } from './BandMeter';
+import { cn } from '../utils/cn';
 
 const txn = {
   start: () => useEditor.getState().beginTxn(),
@@ -59,6 +62,8 @@ export function ClipInspector({ clip }: { clip: Clip }) {
   const normT = dur > 0 ? clamp(clipTime / dur, 0, 1) : 0;
   const staticVal = (c: Clip, id: string) =>
     id === 'scale' ? c.scale : id === 'posX' ? c.posX : id === 'posY' ? c.posY : c.rotation;
+  const nowRot = animatedValue(clip.keyframes, CLIP_PROPS[3], normT, clip.rotation);
+  const nowScale = animatedValue(clip.keyframes, CLIP_PROPS[0], normT, clip.scale);
 
   const cs = (key: keyof ColorSettings, label: string, min: number, max: number, step: number) => (
     <Slider
@@ -172,6 +177,95 @@ export function ClipInspector({ clip }: { clip: Clip }) {
         </div>
       </Section>
 
+      <Section title="Rotate & zoom" defaultOpen={true}>
+        <div className="text-[10.5px] leading-relaxed text-zinc-500">
+          Drag the frame in the preview to move it, pull a corner to zoom, twist the ring to rotate — or use these.
+        </div>
+        <div>
+          <div className="mb-1 text-[11px] text-zinc-400">Rotate</div>
+          <div className="grid grid-cols-6 gap-1">
+            {[
+              { l: '↺ 90', v: -90 },
+              { l: '−15°', v: -15 },
+              { l: '−5°', v: -5 },
+              { l: '+5°', v: 5 },
+              { l: '+15°', v: 15 },
+              { l: '↻ 90', v: 90 },
+            ].map((b) => (
+              <button
+                key={b.l}
+                type="button"
+                onClick={() => st.setTransform({ rotation: nowRot + b.v }, { clipId: clip.id })}
+                className="rounded-md border border-white/[0.08] bg-white/[0.03] py-1 text-[10px] font-semibold text-zinc-300 transition-colors hover:border-[#c084fc]/50 hover:text-white"
+              >
+                {b.l}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-1 text-[11px] text-zinc-400">Zoom</div>
+          <div className="grid grid-cols-6 gap-1">
+            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => st.setTransform({ scale: v }, { clipId: clip.id })}
+                className={cn(
+                  'rounded-md border py-1 text-[10px] font-semibold transition-colors',
+                  Math.abs(nowScale - v) < 0.005
+                    ? 'border-[#22d3ee]/60 bg-[#22d3ee]/15 text-[#22d3ee]'
+                    : 'border-white/[0.08] bg-white/[0.03] text-zinc-300 hover:border-[#22d3ee]/50 hover:text-white'
+                )}
+              >
+                {v * 100}%
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex gap-1.5">
+          <Btn
+            variant="soft"
+            className="flex-1"
+            onClick={() => up({ flipX: !clip.flipX })}
+            title="Mirror the clip horizontally"
+          >
+            ⇋ Flip
+          </Btn>
+          <Btn
+            variant="soft"
+            className="flex-1"
+            onClick={() => st.setTransform({ posX: 0, posY: 0 }, { clipId: clip.id })}
+            title="Recentre the frame"
+          >
+            ⌖ Centre
+          </Btn>
+          <Btn variant="danger" onClick={st.resetTransform} title="Reset scale, rotation and position (0)">
+            <RotateCcw size={13} />
+          </Btn>
+        </div>
+        <div>
+          <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
+            <span>One-click moves</span>
+            <span className="text-[9.5px] text-zinc-600">writes keyframes</span>
+          </div>
+          <div className="grid grid-cols-5 gap-1">
+            {MOVE_PRESETS.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                title={`${m.hint}\n${m.mode === 'clip' ? 'Across the whole clip' : `${m.dur}s move at the playhead`}`}
+                onClick={() => st.applyMove(m.id)}
+                className="flex flex-col items-center gap-0.5 rounded-md border border-white/[0.07] bg-[#12121a] px-0.5 py-1 transition-colors hover:border-[#c084fc]/50 hover:bg-[#191926]"
+              >
+                <span className="text-[12px] leading-none">{m.icon}</span>
+                <span className="text-[8px] font-semibold leading-none text-zinc-400">{m.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </Section>
+
       <Section title="Transform & keyframes" defaultOpen={true}>
         <Seg
           value={clip.fit}
@@ -196,8 +290,8 @@ export function ClipInspector({ clip }: { clip: Clip }) {
               <Slider
                 label={p.label}
                 value={shown}
-                min={p.id === 'scale' ? 0.3 : p.id === 'rotation' ? -180 : -1}
-                max={p.id === 'scale' ? 3 : p.id === 'rotation' ? 180 : 1}
+                min={p.min}
+                max={p.max}
                 step={p.step}
                 format={p.fmt}
                 onStart={txn.start}
@@ -353,6 +447,9 @@ export function FxInspector({ fx }: { fx: FxItem }) {
       </Section>
       {def.params.length > 0 && (
         <Section title="Settings">
+          {def.params.some((p) => p.key === 'band') && (
+            <BandMeter band={String(fx.params.band ?? 'bass')} />
+          )}
           {def.params.map((p, i) => (
             <Fragment key={p.key}>
               {p.group && p.group !== def.params[i - 1]?.group && (
@@ -539,10 +636,14 @@ const SHORTCUTS: [string, string][] = [
   ['S', 'Split at playhead'],
   ['B', 'Tap beat marker'],
   ['R / T', 'Reverse / Twixtor clip'],
+  ['[ / ]', 'Rotate 1° (Shift = 15°)'],
+  [', / .', 'Zoom 5% (Shift = 1%)'],
+  ['0', 'Reset transform'],
   ['Del', 'Delete selection'],
   ['Ctrl+D', 'Duplicate'],
   ['Ctrl+Z', 'Undo (Shift = redo)'],
   ['← →', 'Frame step (Shift = 1s)'],
+  ['Wheel', 'Zoom the frame (Shift = rotate)'],
   ['Ctrl+Wheel', 'Zoom timeline'],
   ['I / O', 'Mark in / out (source)'],
 ];

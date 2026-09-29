@@ -3,16 +3,22 @@ import {
   ChevronLeft,
   ChevronRight,
   Diamond,
+  Grid3x3,
+  MoveDiagonal,
   Pause,
   Play,
   Plus,
   Repeat,
+  RotateCcw,
   Scissors,
 } from 'lucide-react';
 import { useEditor } from '../../store';
 import { PreviewEngine } from '../../lib/preview';
 import { aspectRatio, fmtTime } from '../../lib/utils';
-import { clipAtTime, layoutClips, totalDuration } from '../../lib/velocity';
+import { clipAtTime, clipDuration, layoutClips, totalDuration } from '../../lib/velocity';
+import { animatedValue } from '../../lib/keyframes';
+import { CLIP_PROPS } from '../../types';
+import { TransformGizmo } from '../TransformGizmo';
 import { cn } from '../../utils/cn';
 
 function MobileHud() {
@@ -20,7 +26,13 @@ function MobileHud() {
     const hit = clipAtTime(layoutClips(s.project.clips), s.time);
     if (!hit) return '';
     const c = hit.clip;
+    const dur = Math.max(0.001, clipDuration(c));
+    const u = Math.max(0, Math.min(1, (s.time - hit.start) / dur));
+    const rot = animatedValue(c.keyframes, CLIP_PROPS[3], u, c.rotation);
+    const sc = animatedValue(c.keyframes, CLIP_PROPS[0], u, c.scale);
     const tags: string[] = [`Clip ${hit.index + 1}`];
+    if (Math.abs(rot) > 0.05) tags.push(`⟳ ${Math.round(rot * 10) / 10}°`);
+    if (Math.abs(sc - 1) > 0.005) tags.push(`${Math.round(sc * 100)}%`);
     if (Math.abs(c.speed - 1) > 0.001) tags.push(`${+c.speed.toFixed(2)}×`);
     if (c.reverse) tags.push('REV');
     if (c.twixtor) tags.push('TWX');
@@ -56,7 +68,11 @@ export function MobilePreview() {
   const loop = useEditor((s) => s.loop);
   const aspect = useEditor((s) => s.project.aspect);
   const empty = useEditor((s) => s.project.clips.length === 0);
+  const guides = useEditor((s) => s.guides);
   const st = useEditor.getState();
+  // On a phone the gizmo is a mode, not a permanent overlay: one finger pans
+  // the frame, two fingers pinch-zoom and twist, and a tap still plays.
+  const [xf, setXf] = useState(false);
 
   const [box, setBox] = useState({ w: 0, h: 0 });
 
@@ -104,11 +120,72 @@ export function MobilePreview() {
       {/* Video Viewport Area */}
       <div
         ref={containerRef}
-        onClick={() => st.togglePlay()}
+        onClick={() => {
+          if (!xf) st.togglePlay();
+        }}
         className="relative flex h-[35vh] max-h-[340px] min-h-[190px] w-full items-center justify-center overflow-hidden bg-black/90 cursor-pointer select-none"
       >
         <div className="relative shadow-2xl" style={{ width: box.w, height: box.h }}>
           <canvas ref={canvasRef} className="h-full w-full rounded-md bg-black" />
+          {guides !== 'off' && (
+            <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {guides === 'thirds' ? (
+                <>
+                  <line x1="33.33" y1="0" x2="33.33" y2="100" stroke="rgba(255,255,255,0.22)" strokeWidth="0.25" />
+                  <line x1="66.66" y1="0" x2="66.66" y2="100" stroke="rgba(255,255,255,0.22)" strokeWidth="0.25" />
+                  <line x1="0" y1="33.33" x2="100" y2="33.33" stroke="rgba(255,255,255,0.22)" strokeWidth="0.25" />
+                  <line x1="0" y1="66.66" x2="100" y2="66.66" stroke="rgba(255,255,255,0.22)" strokeWidth="0.25" />
+                </>
+              ) : (
+                <>
+                  <rect x="6" y="6" width="88" height="88" fill="none" stroke="rgba(255,45,85,0.5)" strokeWidth="0.3" strokeDasharray="1.6 1.4" />
+                  <rect x="14" y="16" width="72" height="68" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="0.25" strokeDasharray="1.2 1.2" />
+                </>
+              )}
+            </svg>
+          )}
+          <TransformGizmo boxW={box.w} boxH={box.h} touch enabled={xf} />
+          {/* Transform mode strip — thumb-reachable, out of the way of the HUD */}
+          {!empty && (
+            <div className="absolute inset-x-0 bottom-0 z-30 flex items-center justify-center gap-1.5 p-1.5">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setXf((v) => !v);
+                }}
+                className={cn(
+                  'flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold shadow-lg backdrop-blur transition-colors',
+                  xf ? 'bg-[#22d3ee] text-black' : 'bg-black/55 text-zinc-300'
+                )}
+              >
+                <MoveDiagonal size={11} /> {xf ? 'Done' : 'Transform'}
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  st.ui({ guides: guides === 'off' ? 'thirds' : guides === 'thirds' ? 'safe' : 'off' });
+                }}
+                className={cn(
+                  'flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold shadow-lg backdrop-blur transition-colors',
+                  guides === 'off' ? 'bg-black/55 text-zinc-300' : 'bg-white/85 text-black'
+                )}
+              >
+                <Grid3x3 size={11} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  st.resetTransform();
+                }}
+                className="flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-bold text-zinc-300 shadow-lg backdrop-blur"
+              >
+                <RotateCcw size={11} /> Reset
+              </button>
+            </div>
+          )}
           <MobileHud />
 
           {/* Centered Play overlay when paused */}

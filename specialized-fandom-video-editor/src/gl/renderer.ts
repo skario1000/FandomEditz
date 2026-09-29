@@ -42,6 +42,7 @@ uniform float uTint;
 uniform float uFade;
 uniform float uBW;
 uniform float uSplit;
+uniform float uShade;
 uniform vec3 uShadow;
 uniform vec3 uHigh;
 
@@ -78,6 +79,7 @@ vec3 grade(vec3 c) {
   if (uBW > 0.001) {
     c = mix(c, vec3(dot(c, LW)), clamp(uBW, 0.0, 1.0));
   }
+  c *= uShade;
   return clamp(c, 0.0, 1.0);
 }
 vec2 lensWarp(vec2 p) {
@@ -512,6 +514,7 @@ export class Renderer {
     this.f1(pr, 'uFade', c.fade);
     this.f1(pr, 'uBW', c.bw);
     this.f1(pr, 'uSplit', c.split);
+    this.f1(pr, 'uShade', clamp(fx.shade, 0, 1.4));
     this.f3(pr, 'uShadow', c.shadow);
     this.f3(pr, 'uHigh', c.high);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
