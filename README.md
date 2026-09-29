@@ -15,10 +15,31 @@ npm run dev        # http://localhost:5173
 ```
 
 ```bash
-npm run build      # single-file dist/index.html, share it anywhere
+npm run build      # single-file dist/index.html
+npm run build:docs # the same file, into ../docs — this is the site
 npm run typecheck  # tsc --noEmit
 npm test           # 70+ regression checks on the editing maths
 ```
+
+## Put it online (free)
+
+`npm run build:docs` writes **one self-contained `docs/index.html`** — no
+server, no assets, no accounts. It has a relative base, so it runs from any
+path. Three ways to host it, cheapest first:
+
+1. **GitHub Pages** — the repo is public and `docs/` is already committed to
+   `main`. Turn it on at
+   `github.com/skario1000/FandomEditz/settings/pages` → Source *Deploy from a
+   branch* → `main` + `/docs`. Live in about a minute at
+   `https://skario1000.github.io/FandomEditz/`, free forever.
+2. **Netlify Drop** — drag the `docs` folder onto
+   `https://app.netlify.com/drop` and you get a `*.netlify.app` URL with no
+   account at all.
+3. **Nothing** — download `docs/index.html` and open it. It works offline, and
+   the media never leaves the browser either way.
+
+Re-deploying after a change is `npm run build:docs && git add -A && git commit
+&& git push`.
 
 ## What's in the box
 
