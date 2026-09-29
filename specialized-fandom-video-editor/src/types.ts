@@ -144,13 +144,16 @@ export interface AnimProp {
   step: number;
   unit: string;
   fmt: (v: number) => string;
+  /** Graph-editor value range; defaults to min/max. */
+  gMin?: number;
+  gMax?: number;
 }
 
 export const CLIP_PROPS: AnimProp[] = [
-  { id: 'scale', label: 'Scale', min: 0.2, max: 3, step: 0.01, unit: '%', fmt: (v) => `${Math.round(v * 100)}%` },
-  { id: 'posX', label: 'Position X', min: -1, max: 1, step: 0.01, unit: '', fmt: (v) => v.toFixed(2) },
-  { id: 'posY', label: 'Position Y', min: -1, max: 1, step: 0.01, unit: '', fmt: (v) => v.toFixed(2) },
-  { id: 'rotation', label: 'Rotation', min: -180, max: 180, step: 1, unit: '°', fmt: (v) => `${v.toFixed(0)}°` },
+  { id: 'scale', label: 'Scale', min: 0.1, max: 12, step: 0.01, unit: '%', fmt: (v) => `${Math.round(v * 100)}%`, gMin: 0.4, gMax: 2.4 },
+  { id: 'posX', label: 'Position X', min: -2, max: 2, step: 0.01, unit: '', fmt: (v) => v.toFixed(2) },
+  { id: 'posY', label: 'Position Y', min: -2, max: 2, step: 0.01, unit: '', fmt: (v) => v.toFixed(2) },
+  { id: 'rotation', label: 'Rotation', min: -720, max: 720, step: 0.5, unit: '°', fmt: (v) => `${Math.round(v * 10) / 10}°`, gMin: -400, gMax: 400 },
 ];
 
 export const FX_PROPS: AnimProp[] = [

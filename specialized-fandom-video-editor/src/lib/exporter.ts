@@ -19,7 +19,7 @@ import { computeFrame } from './compose';
 import { totalDuration } from './velocity';
 import { DemoRenderer } from './demo';
 import { drawTexts } from './overlay';
-import { mixTimelineAudio } from './audio';
+import { mixTimelineAudio, ensureMusicAnalysis } from './audio';
 import { seekVideo, waitEvent } from './utils';
 
 export interface ExportOptions {
@@ -103,6 +103,9 @@ export async function runExport(
   output.addVideoTrack(vsrc, { frameRate: fps });
 
   const mix = await mixTimelineAudio(project, total);
+  // Music-reactive effects are baked from the track's envelopes — make sure they
+  // exist before the first frame is rendered, or the export would be flat.
+  await ensureMusicAnalysis(project.music?.mediaId);
   let asrc: AudioBufferSource | null = null;
   if (mix) {
     const acodec = await getFirstEncodableAudioCodec(format.getSupportedAudioCodecs(), { numberOfChannels: 2, sampleRate: 48000 });

@@ -41,7 +41,10 @@ export function DropOverlay({ show }: { show: boolean }) {
 
 const TIPS: [string, string][] = [
   ['🍿 Microwave edit', 'Songs are marked automatically → Beats tab → “Microwave edit”. Every beat becomes a cut with a forward push, eased snap-back, side slam and zoom pulse.'],
+  ['🖐 Move it by hand', 'Drag the frame in the preview to pan, pull a corner to zoom, twist the ring to rotate. Wheel zooms, shift+wheel rotates, and on a phone two fingers do all three at once.'],
+  ['🌀 Rotate & zoom', 'The “Rotate & 3D” shelf holds spin zooms, dutch angles, orbits, 3D spins and roll transitions. One-click moves in the inspector write real keyframes you can bend afterwards.'],
   ['🎯 Good zooms', 'Use “Good Zoom” or “Zoom Transition” centred on a cut. Motion blur is computed automatically from the movement (Project → Motion blur).'],
+  ['🎚️ Music reactive', 'Beats tab → “Make it breathe”. Zoom, shake and glow follow the low end of your track, baked from the audio so the export matches the preview.'],
   ['🫧 Twixtor', 'Speed tab → Twixtor 25%. Neighbouring frames are blended for smooth slow motion — the export renders exact frame blends.'],
   ['📈 Velocity', 'Velocity ramps keep the clip length, so your cuts stay locked to the beat while the speed curve changes inside the clip.'],
   ['⏪ Reverse', 'Toggle Reverse (R) on a clip, or drop the “Rewind” / “Reverse Section” time FX over any part of the timeline.'],
@@ -73,7 +76,7 @@ export function HelpModal() {
           ))}
         </div>
         <div className="border-t border-white/[0.06] px-4 py-3 text-[11px] text-zinc-500">
-          Shortcuts: <b className="text-zinc-300">Space</b> play · <b className="text-zinc-300">S</b> split · <b className="text-zinc-300">B</b> beat · <b className="text-zinc-300">R</b> reverse · <b className="text-zinc-300">T</b> twixtor · <b className="text-zinc-300">Del</b> delete · <b className="text-zinc-300">Ctrl+Z</b> undo · <b className="text-zinc-300">Ctrl+wheel</b> zoom timeline
+          Shortcuts: <b className="text-zinc-300">Space</b> play · <b className="text-zinc-300">S</b> split · <b className="text-zinc-300">B</b> beat · <b className="text-zinc-300">R</b> reverse · <b className="text-zinc-300">T</b> twixtor · <b className="text-zinc-300">[ ]</b> rotate · <b className="text-zinc-300">, .</b> zoom · <b className="text-zinc-300">0</b> reset transform · <b className="text-zinc-300">Del</b> delete · <b className="text-zinc-300">Ctrl+Z</b> undo · <b className="text-zinc-300">Ctrl+wheel</b> zoom timeline
         </div>
       </div>
     </div>

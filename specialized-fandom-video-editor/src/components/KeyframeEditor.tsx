@@ -61,8 +61,10 @@ export function KeyframeEditor({ props, propId, onPropChange, tracks, onTracksCh
 
   const t2x = useCallback((t: number) => padL + ((t - view[0]) / (view[1] - view[0] || 1)) * boxW, [view, boxW]);
   const x2t = useCallback((x: number) => clamp(view[0] + ((x - padL) / boxW) * (view[1] - view[0]), 0, 1), [view, boxW]);
-  const v2y = useCallback((v: number) => padT + (1 - clamp((v - prop.min) / (prop.max - prop.min || 1), -0.6, 1.6)) * boxH, [prop, boxH]);
-  const y2v = useCallback((y: number) => prop.min + (1 - (y - padT) / boxH) * (prop.max - prop.min), [prop, boxH]);
+  const gMin = prop.gMin ?? prop.min;
+  const gMax = prop.gMax ?? prop.max;
+  const v2y = useCallback((v: number) => padT + (1 - clamp((v - gMin) / (gMax - gMin || 1), -0.6, 1.6)) * boxH, [gMin, gMax, boxH]);
+  const y2v = useCallback((y: number) => gMin + (1 - (y - padT) / boxH) * (gMax - gMin), [gMin, gMax, boxH]);
 
   const setTracks = (next: KeyframeTrack[] | undefined) => onTracksChange(next && next.length ? next : undefined);
   const commitTrack = (nt: KeyframeTrack) => {
@@ -142,7 +144,7 @@ export function KeyframeEditor({ props, propId, onPropChange, tracks, onTracksCh
     const others = keys.filter((k) => k.id !== kf.id).map((k) => k.t);
     const mv = (ev: PointerEvent) => {
       let t = clamp(t0 + ((ev.clientX - sx) / boxW) * (view[1] - view[0]), 0, 1);
-      let v = clamp(v0 - ((ev.clientY - sy) / boxH) * (prop.max - prop.min), prop.min, prop.max);
+      let v = clamp(v0 - ((ev.clientY - sy) / boxH) * (gMax - gMin), gMin, gMax);
       if (snap) {
         const th = 7 / boxW * (view[1] - view[0]);
         for (const o of [normU, ...others, 0, 0.25, 0.5, 0.75, 1]) {
@@ -252,7 +254,7 @@ export function KeyframeEditor({ props, propId, onPropChange, tracks, onTracksCh
     return arr;
   }, [view, boxW]);
 
-  const gridVals = [prop.max, (prop.max + prop.min) / 2, prop.min];
+  const gridVals = [gMax, (gMax + gMin) / 2, gMin];
 
   const graph = (
     <div className={cn('relative rounded-lg border border-white/[0.08] bg-[#08080d]', expanded && 'shadow-2xl')} style={{ width: W, height: H }}>

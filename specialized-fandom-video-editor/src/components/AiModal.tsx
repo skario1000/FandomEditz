@@ -35,6 +35,9 @@ import { cn } from '../utils/cn';
 
 const EXAMPLE_PROMPTS = [
   'Make simple zooms over the edit',
+  'Add a spin zoom roll on every clip',
+  'Tip the frame into a dutch angle across the edit',
+  'Make the whole edit breathe with the music',
   'Add smooth AE Flow zooms alternating in and out',
   'Create a Spidey-Sense glitch with red flash and shake',
   'Add turbulent displace text saying SPIDER',

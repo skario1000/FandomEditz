@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Clapperboard, MonitorPlay, Pause, Play, Repeat, SkipBack, SkipForward } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clapperboard, Grid3x3, MonitorPlay, MoveDiagonal, Pause, Play, Repeat, SkipBack, SkipForward } from 'lucide-react';
 import { useEditor } from '../store';
 import { PreviewEngine } from '../lib/preview';
-import { aspectRatio, fmtTime } from '../lib/utils';
-import { clipAtTime, layoutClips, totalDuration } from '../lib/velocity';
+import { aspectRatio, clamp, fmtTime } from '../lib/utils';
+import { clipAtTime, clipDuration, layoutClips, totalDuration } from '../lib/velocity';
+import { animatedValue } from '../lib/keyframes';
+import { CLIP_PROPS } from '../types';
 import { SourceViewer } from './SourceViewer';
+import { TransformGizmo } from './TransformGizmo';
 import { cn } from '../utils/cn';
 
 function Hud() {
@@ -12,7 +15,13 @@ function Hud() {
     const hit = clipAtTime(layoutClips(s.project.clips), s.time);
     if (!hit) return '';
     const c = hit.clip;
+    const dur = Math.max(0.001, clipDuration(c));
+    const u = clamp((s.time - hit.start) / dur, 0, 1);
+    const rot = animatedValue(c.keyframes, CLIP_PROPS[3], u, c.rotation);
+    const sc = animatedValue(c.keyframes, CLIP_PROPS[0], u, c.scale);
     const tags: string[] = [`#${hit.index + 1}`];
+    if (Math.abs(rot) > 0.05) tags.push(`⟳ ${Math.round(rot * 10) / 10}°`);
+    if (Math.abs(sc - 1) > 0.005) tags.push(`${Math.round(sc * 100)}%`);
     if (Math.abs(c.speed - 1) > 0.001) tags.push(`${+c.speed.toFixed(2)}×`);
     if (c.reverse) tags.push('REVERSE');
     if (c.twixtor) tags.push('TWIXTOR');
@@ -23,7 +32,13 @@ function Hud() {
   return (
     <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-1">
       {info.split('|').map((t, i) => (
-        <span key={i} className={cn('rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wider backdrop-blur', i === 0 ? 'bg-black/60 text-zinc-300' : 'bg-[#ff2d55]/80 text-white')}>
+        <span
+          key={i}
+          className={cn(
+            'rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wider backdrop-blur',
+            i === 0 ? 'bg-black/60 text-zinc-300' : t.startsWith('⟳') || t.endsWith('%') ? 'bg-[#c084fc]/80 text-white' : 'bg-[#ff2d55]/80 text-white'
+          )}
+        >
           {t}
         </span>
       ))}
@@ -93,11 +108,36 @@ function Transport() {
   );
 }
 
+function Guides() {
+  const mode = useEditor((s) => s.guides);
+  if (mode === 'off') return null;
+  return (
+    <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+      {mode === 'thirds' && (
+        <>
+          <line x1="33.33" y1="0" x2="33.33" y2="100" stroke="rgba(255,255,255,0.22)" strokeWidth="0.25" />
+          <line x1="66.66" y1="0" x2="66.66" y2="100" stroke="rgba(255,255,255,0.22)" strokeWidth="0.25" />
+          <line x1="0" y1="33.33" x2="100" y2="33.33" stroke="rgba(255,255,255,0.22)" strokeWidth="0.25" />
+          <line x1="0" y1="66.66" x2="100" y2="66.66" stroke="rgba(255,255,255,0.22)" strokeWidth="0.25" />
+        </>
+      )}
+      {mode === 'safe' && (
+        <>
+          <rect x="6" y="6" width="88" height="88" fill="none" stroke="rgba(255,45,85,0.5)" strokeWidth="0.3" strokeDasharray="1.6 1.4" />
+          <rect x="14" y="16" width="72" height="68" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="0.25" strokeDasharray="1.2 1.2" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 export function PreviewPanel() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
   const aspect = useEditor((s) => s.project.aspect);
   const viewer = useEditor((s) => s.viewer);
+  const gizmo = useEditor((s) => s.gizmo);
+  const guides = useEditor((s) => s.guides);
   const sourceName = useEditor((s) => s.media.find((m) => m.id === s.sourceId)?.name);
   const empty = useEditor((s) => s.project.clips.length === 0);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -157,11 +197,29 @@ export function PreviewPanel() {
           <Clapperboard size={13} /> Source{sourceName ? ` · ${sourceName}` : ''}
         </button>
         <div className="flex-1" />
+        <button
+          type="button"
+          title="On-canvas transform handles — drag the frame, corners to zoom, the ring to rotate"
+          onClick={() => st.ui({ gizmo: !gizmo })}
+          className={cn('flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors', gizmo ? 'bg-[#22d3ee]/15 text-[#22d3ee]' : 'text-zinc-600 hover:text-zinc-300')}
+        >
+          <MoveDiagonal size={12} /> Gizmo
+        </button>
+        <button
+          type="button"
+          title="Composition guides: rule of thirds, or the safe area the app UI covers"
+          onClick={() => st.ui({ guides: guides === 'off' ? 'thirds' : guides === 'thirds' ? 'safe' : 'off' })}
+          className={cn('flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors', guides === 'off' ? 'text-zinc-600 hover:text-zinc-300' : 'bg-white/10 text-zinc-200')}
+        >
+          <Grid3x3 size={12} /> {guides === 'off' ? 'Guides' : guides === 'thirds' ? 'Thirds' : 'Safe'}
+        </button>
         <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-600">{aspect} · live GPU preview</span>
       </div>
       <div ref={areaRef} className="bg-grid relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#08080c]">
         <div className="relative" style={{ width: box.w, height: box.h, display: viewer === 'program' ? 'block' : 'none' }}>
           <canvas ref={canvasRef} className="h-full w-full rounded-md bg-black shadow-2xl shadow-black/60 ring-1 ring-white/10" />
+          <Guides />
+          <TransformGizmo boxW={box.w} boxH={box.h} enabled={gizmo && viewer === 'program'} />
           <Hud />
           {empty && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center">

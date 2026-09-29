@@ -2,12 +2,12 @@ import { useRef, useState } from 'react';
 import { Activity, Loader2, Music2, Scissors, Sparkles, Trash2, Zap } from 'lucide-react';
 import { useEditor } from '../store';
 import { audio, detectBeats } from '../lib/audio';
-import { autoMicrowave, autoVelocity, cutOnBeats, fxOnBeats, snapCutsToBeats } from '../lib/tools';
+import { autoBassPump, autoMicrowave, autoVelocity, cutOnBeats, fxOnBeats, snapCutsToBeats } from '../lib/tools';
 import { FX_DEFS } from '../lib/effects';
 import { AUDIO_ACCEPT, importFiles } from '../lib/media';
 import { Btn, Section, Seg, Select, Slider } from './ui';
 
-const BEAT_FX = ['zoomPunch', 'flash', 'shake', 'impact', 'rgbSplit', 'microwave', 'invert', 'glitch', 'strobe', 'exposure', 'smoothZoom', 'bw'];
+const BEAT_FX = ['zoomPunch', 'spinZoom', 'dutchZoom', 'ySpin', 'snapRotate', 'flash', 'shake', 'impact', 'rgbSplit', 'microwave', 'invert', 'glitch', 'strobe', 'exposure', 'smoothZoom', 'bw', 'bassPump'];
 
 export function BeatsTab() {
   const music = useEditor((s) => s.project.music);
@@ -170,6 +170,26 @@ export function BeatsTab() {
             <div className="text-[10px] leading-snug text-zinc-400">Cut every 2 beats, ramps + zoom punches</div>
           </button>
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (!music) {
+              st.toast('Pick a song first — the pump is baked from its audio', 'info');
+              return;
+            }
+            st.commit((p) => autoBassPump(p, { band: 'bass', zoom: 0.2, shake: 0.2, glow: 0.25 }));
+            st.toast('Bass Pump added across the whole edit', 'success');
+          }}
+          className="mt-2 w-full rounded-lg border border-[#34d399]/30 bg-gradient-to-br from-[#34d399]/20 to-transparent p-2.5 text-left transition-colors hover:border-[#34d399]/70"
+        >
+          <div className="flex items-center gap-2">
+            <div className="text-lg">🎚️</div>
+            <div className="min-w-0">
+              <div className="text-[12px] font-bold text-zinc-100">Make it breathe</div>
+              <div className="text-[10px] leading-snug text-zinc-400">Zoom, shake and glow ride the low end of your track — baked from the audio, so the export matches</div>
+            </div>
+          </div>
+        </button>
       </Section>
 
       <Section title="Cut to the beat">

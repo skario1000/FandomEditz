@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "esbuild tests/editor.test.ts --bundle --format=esm --platform=neutral --outfile=.tmp/test.mjs --log-level=error && node .tmp/test.mjs",
+    "typecheck": "tsc --noEmit",
+    "build:docs": "vite build --outDir ../docs --emptyOutDir"
   },
   "dependencies": {
     "@fontsource/anton": "^5.3.0",

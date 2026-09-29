@@ -134,7 +134,55 @@ export function generateLocalAiPlan(prompt: string, project: Project): AiPlan {
     };
   }
 
-  // 2. Spider-Sense / Glitch / Tingle
+  // 2. Rotate / spin / dutch / 3D — the rotate-and-zoom moves
+  if (p.includes('rotate') || p.includes('roll') || p.includes('spin') || p.includes('dutch') || p.includes('tilt') || p.includes('orbit') || p.includes('3d')) {
+    const rot = p.includes('dutch') || p.includes('tilt');
+    const threeD = p.includes('3d');
+    const orbit = p.includes('orbit');
+    const fx = threeD ? 'ySpin' : rot ? 'dutchZoom' : orbit ? 'orbitZoom' : 'spinZoom';
+    const actions: AiPlanAction[] = [];
+    layout.forEach((l, i) => {
+      const dur = Math.max(0.4, Math.min(l.end - l.start, 0.9));
+      actions.push({
+        type: 'add_fx',
+        fxType: fx,
+        start: Number(l.start.toFixed(2)),
+        duration: Number(dur.toFixed(2)),
+        lane: 0,
+        intensity: 1,
+        params: threeD ? { turns: 1, zoom: 0.12 } : rot ? { angle: 14, amount: 0.32 } : orbit ? { angle: 18, amount: 0.24 } : { amount: 0.38, turns: 1 },
+        description: `${FX_DEFS[fx].name} on clip #${i + 1}`,
+      });
+    });
+    return {
+      summary: `Created ${actions.length} rotate-and-zoom moves across the edit`,
+      explanation: `${FX_DEFS[fx].desc} Shutter blur is computed from the rotation, so the spin smears instead of stepping.`,
+      actions,
+      isFallback: true,
+    };
+  }
+
+  // 3. Music-reactive / breathe with the track
+  if (p.includes('breathe') || p.includes('react') || p.includes('pump') || p.includes('music') || p.includes('bass')) {
+    if (!project.music) {
+      return {
+        summary: 'No track to react to yet',
+        explanation: 'Add a song first — the reactive layer is baked from its audio, so it lines up with what you hear.',
+        actions: [],
+        isFallback: true,
+      };
+    }
+    return {
+      summary: 'Added a music-reactive layer across the edit',
+      explanation: 'Zoom, shake and glow now follow the low end of your track. The envelopes are baked from the audio itself, so the export matches the preview frame for frame.',
+      actions: [
+        { type: 'add_fx', fxType: 'bassPump', start: 0, duration: Math.max(1, total - 0.02), lane: 0, params: { band: 'bass', zoom: 0.2, shake: 0.2, glow: 0.25 }, description: 'Bass Pump over the whole edit' },
+      ],
+      isFallback: true,
+    };
+  }
+
+  // 4. Spider-Sense / Glitch / Tingle
   if (p.includes('spider') || p.includes('sense') || p.includes('tingle')) {
     const at = project.beats[0] ?? Math.min(1.5, total / 2);
     return {
@@ -151,7 +199,7 @@ export function generateLocalAiPlan(prompt: string, project: Project): AiPlan {
     };
   }
 
-  // 3. Beat Drop / Drop / Flash Hit
+  // 5. Beat Drop / Drop / Flash Hit
   if (p.includes('drop') || p.includes('beat drop') || p.includes('flash') || p.includes('hit')) {
     const at = project.beats.find((b) => b > 2.0) ?? (total > 3 ? 3.0 : 0);
     return {
@@ -167,7 +215,7 @@ export function generateLocalAiPlan(prompt: string, project: Project): AiPlan {
     };
   }
 
-  // 4. Microwave / pulses
+  // 6. Microwave / pulses
   if (p.includes('microwave') || p.includes('pulse')) {
     return {
       summary: 'Applied Microwave edit pulse sequence',
@@ -265,7 +313,9 @@ Your job is to read the user's prompt (e.g. "make simple zooms over the edit", "
 
 Available effects in EDITVERSE:
 - Zooms: 'smoothZoom' (Good Zoom), 'flowZoom' (AE Flow), 'snapZoom', 'crashZoom', 'landZoom', 'heroZoom', 'pulseZoom', 'whipZoom', 'zoomIn', 'zoomOut', 'zoomPunch', 'microwave', 'zoomTrans'
+- Rotate & 3D: 'spinZoom' (zoom + full roll), 'dutchZoom' (tilt in and level out), 'orbitZoom' (pendulum), 'ySpin' (3D flip through the back face), 'tiltRush' (slow constant-rate roll), 'snapRotate' (whip off-level and back), 'rollTrans', 'rotateTrans'
 - Transitions: 'zoomTrans', 'spinTrans', 'whipTrans', 'flashTrans', 'blurTrans', 'glitchTrans'
+- Music Reactive: 'bassPump' (zoom/shake/glow driven by the track's low end — params: band 'bass'|'mid'|'high'|'full'|'hit')
 - Motion: 'shake', 'impact', 'wiggle', 'handheld', 'spin', 'bounce'
 - Light: 'flash', 'strobe', 'invert', 'glow', 'exposure', 'bw', 'hueShift'
 - Glitch & Stylize: 'rgbSplit', 'glitch', 'vhs', 'pixelate', 'verse', 'halftone', 'letterbox', 'grain', 'echo'

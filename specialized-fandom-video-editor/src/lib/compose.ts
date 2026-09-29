@@ -56,24 +56,78 @@ export interface FrameDesc {
 const DEF_COLOR = defaultColor();
 const IDENT = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
 
-function baseTransform(clip: Clip, sw: number, sh: number, W: number, H: number, u: number = 0): Aff {
-  const s0 = clip.fit === 'cover' ? Math.max(W / sw, H / sh) : Math.min(W / sw, H / sh);
-  
-  // animated keyframe tracks on the clip (scale / position / rotation)
-  const curScale = animatedValue(clip.keyframes, CLIP_PROPS[0], u, clip.scale);
-  const curPosX = animatedValue(clip.keyframes, CLIP_PROPS[1], u, clip.posX);
-  const curPosY = animatedValue(clip.keyframes, CLIP_PROPS[2], u, clip.posY);
-  const curRot = animatedValue(clip.keyframes, CLIP_PROPS[3], u, clip.rotation);
+/**
+ * Which music segment is playing at timeline time T, and how far into it we
+ * are. Music-reactive effects read the envelopes at that source position, so
+ * trimming the song or splitting it into segments keeps them in sync.
+ */
+export function musicAt(project: Project, T: number): { mediaId: string; t: number } | null {
+  const list = project.musicClips && project.musicClips.length ? project.musicClips : project.music ? [project.music] : [];
+  for (const m of list) {
+    if (!m.mediaId) continue;
+    const dur = m.duration ?? Infinity;
+    if (T >= m.start && T < m.start + dur) return { mediaId: m.mediaId, t: (m.srcIn ?? 0) + (T - m.start) };
+  }
+  return null;
+}
 
-  const s = s0 * curScale;
+/**
+ * Everything the renderer needs to place a clip, and everything the on-canvas
+ * gizmo needs to draw and drag it. `s0` is the fit scale, `s` includes the
+ * clip's own scale, and `ovX/ovY` are how far the frame overhangs the output —
+ * which is exactly the unit posX/posY are measured in.
+ */
+export interface ClipGeom {
+  sw: number;
+  sh: number;
+  s0: number;
+  s: number;
+  scale: number;
+  posX: number;
+  posY: number;
+  rotation: number;
+  cx: number;
+  cy: number;
+  ovX: number;
+  ovY: number;
+}
+
+export function clipGeom(clip: Clip, sw: number, sh: number, W: number, H: number, u = 0): ClipGeom {
+  const s0 = clip.fit === 'cover' ? Math.max(W / sw, H / sh) : Math.min(W / sw, H / sh);
+  // animated keyframe tracks on the clip (scale / position / rotation)
+  const scale = animatedValue(clip.keyframes, CLIP_PROPS[0], u, clip.scale);
+  const posX = animatedValue(clip.keyframes, CLIP_PROPS[1], u, clip.posX);
+  const posY = animatedValue(clip.keyframes, CLIP_PROPS[2], u, clip.posY);
+  const rotation = animatedValue(clip.keyframes, CLIP_PROPS[3], u, clip.rotation);
+  const s = s0 * scale;
   const ovX = Math.abs(sw * s - W) / 2;
   const ovY = Math.abs(sh * s - H) / 2;
-  const cx = W / 2 + curPosX * (ovX > 1 ? ovX : W / 2);
-  const cy = H / 2 + curPosY * (ovY > 1 ? ovY : H / 2);
-  let A = affT(-sw / 2, -sh / 2);
-  A = affMul(affS(s * (clip.flipX ? -1 : 1), s), A);
-  A = affMul(affR((curRot * Math.PI) / 180), A);
-  return affMul(affT(cx, cy), A);
+  return {
+    sw,
+    sh,
+    s0,
+    s,
+    scale,
+    posX,
+    posY,
+    rotation,
+    cx: W / 2 + posX * (ovX > 1 ? ovX : W / 2),
+    cy: H / 2 + posY * (ovY > 1 ? ovY : H / 2),
+    ovX,
+    ovY,
+  };
+}
+
+/** Source-pixel → output-pixel matrix of a clip's own transform (no effects). */
+export function clipLayerMatrix(g: ClipGeom, flipX = false): Aff {
+  let A = affT(-g.sw / 2, -g.sh / 2);
+  A = affMul(affS(g.s * (flipX ? -1 : 1), g.s), A);
+  A = affMul(affR((g.rotation * Math.PI) / 180), A);
+  return affMul(affT(g.cx, g.cy), A);
+}
+
+function baseTransform(clip: Clip, sw: number, sh: number, W: number, H: number, u: number = 0): Aff {
+  return clipLayerMatrix(clipGeom(clip, sw, sh, W, H, u), clip.flipX);
 }
 
 const toPx = (G: Aff, H: number): Aff => affMul(affS(H, H), affMul(G, affS(1 / H, 1 / H)));
@@ -99,11 +153,17 @@ export function computeFrame(
   const { t: Tm, rate: rateMul } = remapTime(project.fx, T);
   const hit = clipAtTime(layout, Tm);
 
+  // Where we are *inside* the track under the playhead, so a music-reactive
+  // effect follows the song even when it is trimmed, offset or split.
+  const mus = musicAt(project, T);
+  const musicId = mus?.mediaId ?? null;
+  const musicT = mus ? mus.t : T;
+
   const fx = newFxState(aspect);
-  evaluateFx(project.fx, T, project.beats, fx);
+  evaluateFx(project.fx, T, project.beats, fx, musicId, musicT);
   const dt = 0.5 / Math.max(12, project.fps);
   const fxPrev = newFxState(aspect);
-  evaluateFx(project.fx, T - dt, project.beats, fxPrev);
+  evaluateFx(project.fx, T - dt, project.beats, fxPrev, musicAt(project, T - dt)?.mediaId ?? null, musicAt(project, T - dt)?.t ?? T - dt);
 
   let M1: Float32Array = IDENT;
   let M0: Float32Array = IDENT;

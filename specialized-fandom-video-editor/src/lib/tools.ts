@@ -85,3 +85,16 @@ export function autoVelocity(p: Project): Project {
   q = { ...q, clips: q.clips.map((c, i) => ({ ...c, velocity: { preset: presets[i % presets.length], intensity: 0.85, center: 0.5 } })) };
   return fxOnBeats(q, 'zoomPunch', { amount: 0.18 }, 2, 0.6);
 }
+
+/**
+ * One reactive layer over the whole edit: the frame breathes with the track's
+ * low end for the entire timeline. It is a single effect, so the gizmo, the
+ * inspector and undo all treat it like any other layer.
+ */
+export function autoBassPump(p: Project, params?: Record<string, ParamValue>): Project {
+  const total = layoutClips(p.clips).reduce((a, l) => a + (l.end - l.start), 0);
+  if (total <= 0) return p;
+  const dur = Math.max(0.2, total - 0.02);
+  if (p.fx.some((f) => f.type === 'bassPump' && f.start < 0.01)) return p;
+  return { ...p, fx: [...p.fx, makeFx('bassPump', 0, dur, freeLane(p.fx, 0, dur, 0), params)] };
+}

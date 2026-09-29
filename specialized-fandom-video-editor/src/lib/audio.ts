@@ -3,6 +3,193 @@ import { clipSourceRate, clipSourceTime, layoutClips } from './velocity';
 
 export const DEMO_BEAT_ID = 'demo-beat';
 
+/* ------------------------------------------------------------------ */
+/* Music reactivity: band envelopes                                     */
+/*                                                                     */
+/* After Effects has no built-in audio reactivity — it needs a plugin  */
+/* (or a 3rd-party expression) to make a layer breathe with the music. */
+/* We bake it instead: every track is analysed once into percussive and */
+/* sustained envelopes, so music-reactive effects are deterministic and  */
+/* render identically in the preview and in the exported file.         */
+/* ------------------------------------------------------------------ */
+
+export type Band = 'bass' | 'mid' | 'high' | 'full' | 'hit';
+const BANDS: Exclude<Band, 'hit'>[] = ['bass', 'mid', 'high', 'full'];
+export const BAND_LABELS: Record<Band, string> = {
+  bass: 'Bass / kick',
+  mid: 'Mid / vocal',
+  high: 'Hi-hats / air',
+  full: 'Whole mix',
+  hit: 'Hits / transients',
+};
+
+/** Envelope frames per second. 90 Hz is finer than a frame at 60 fps. */
+const ENV_RATE = 90;
+
+export interface BandAnalysis {
+  rate: number;
+  duration: number;
+  /** Sustained energy, normalised 0..1. */
+  env: Record<Exclude<Band, 'hit'>, Float32Array>;
+  /** Instantaneous (unsmoothed) energy, normalised 0..1. */
+  raw: Record<Exclude<Band, 'hit'>, Float32Array>;
+  /** Percussive transient detector, normalised 0..1. */
+  hit: Float32Array;
+}
+
+const analyses = new Map<string, BandAnalysis>();
+const analysisJobs = new Map<string, Promise<BandAnalysis | null>>();
+
+function onePole(sr: number, hz: number) {
+  const a = 1 - Math.exp((-2 * Math.PI * hz) / sr);
+  return (x: number, y: number) => y + a * (x - y);
+}
+
+/** Normalise by a high percentile so quiet tracks still drive the effect fully. */
+function normalise(a: Float32Array): Float32Array {
+  const sorted = Float32Array.from(a).sort();
+  const hi = sorted[Math.floor(sorted.length * 0.97)] || 1;
+  const lo = sorted[Math.floor(sorted.length * 0.12)] || 0;
+  const span = Math.max(0.04, hi - lo);
+  for (let i = 0; i < a.length; i++) a[i] = Math.max(0, Math.min(1, (a[i] - lo) / span));
+  return a;
+}
+
+/** Asymmetric smoothing: snap up on the transient, ease back down. */
+function envFollow(src: Float32Array, attack: number, release: number): Float32Array {
+  const out = new Float32Array(src.length);
+  let y = 0;
+  for (let i = 0; i < src.length; i++) {
+    const target = src[i];
+    const k = target > y ? attack : release;
+    y += (target - y) * k;
+    out[i] = y;
+  }
+  return out;
+}
+
+async function analyseBuffer(buf: AudioBuffer): Promise<BandAnalysis> {
+  const sr = 11025;
+  const len = Math.max(1, Math.ceil(buf.duration * sr));
+  const off = new OfflineAudioContext(1, len, sr);
+  const src = off.createBufferSource();
+  src.buffer = buf;
+  src.connect(off.destination);
+  src.start();
+  const d = (await off.startRendering()).getChannelData(0);
+
+  const frames = Math.max(2, Math.ceil(buf.duration * ENV_RATE));
+  const hop = d.length / frames;
+  const lpLo = onePole(sr, 160);
+  const lpMidHi = onePole(sr, 3200);
+  const raw = {
+    bass: new Float32Array(frames),
+    mid: new Float32Array(frames),
+    high: new Float32Array(frames),
+    full: new Float32Array(frames),
+  };
+  let yLo = 0;
+  let yMid = 0;
+  for (let f = 0; f < frames; f++) {
+    const a = Math.floor(f * hop);
+    const b = Math.min(d.length, Math.max(a + 1, Math.floor((f + 1) * hop)));
+    let el = 0;
+    let eh = 0;
+    let ef = 0;
+    for (let i = a; i < b; i += 2) {
+      const x = d[i] || 0;
+      yLo = lpLo(x, yLo);
+      yMid = lpMidHi(x, yMid);
+      const low = yLo;
+      const air = x - yMid;
+      const band = yMid - yLo;
+      el += low * low;
+      eh += air * air;
+      ef += band * band;
+    }
+    const n = Math.max(1, Math.ceil((b - a) / 2));
+    raw.bass[f] = Math.sqrt(el / n);
+    raw.mid[f] = Math.sqrt(ef / n);
+    raw.high[f] = Math.sqrt(eh / n);
+    raw.full[f] = Math.sqrt((el + ef + eh) / n);
+  }
+  const env = {} as BandAnalysis['env'];
+  for (const b of BANDS) {
+    normalise(raw[b]);
+    env[b] = envFollow(raw[b], 0.55, 0.12);
+  }
+  // Percussive = how far the instant energy sits above its own slow average.
+  const hit = new Float32Array(frames);
+  const w = Math.max(2, Math.round(ENV_RATE * 0.42));
+  for (let f = 0; f < frames; f++) {
+    const a = Math.max(0, f - w);
+    const b = Math.min(frames, f + w + 1);
+    let avg = 0;
+    for (let i = a; i < b; i++) avg += raw.bass[i];
+    avg /= b - a;
+    hit[f] = Math.max(0, raw.bass[f] - avg * 0.94);
+  }
+  normalise(hit);
+  return { rate: ENV_RATE, duration: buf.duration, env, raw, hit };
+}
+
+/** Analyse a registered track (cached). Returns null while it is still running. */
+export function musicAnalysis(mediaId: string | null | undefined): BandAnalysis | null {
+  if (!mediaId) return null;
+  return analyses.get(mediaId) ?? null;
+}
+
+/** Kick off analysis for a track; safe to call repeatedly. */
+export function ensureMusicAnalysis(mediaId: string | null | undefined): Promise<BandAnalysis | null> {
+  if (!mediaId) return Promise.resolve(null);
+  const done = analyses.get(mediaId);
+  if (done) return Promise.resolve(done);
+  const job = analysisJobs.get(mediaId);
+  if (job) return job;
+  const buf = audio.buffers.get(mediaId);
+  if (!buf) return Promise.resolve(null);
+  const p = analyseBuffer(buf)
+    .then((a) => {
+      analyses.set(mediaId, a);
+      analysisJobs.delete(mediaId);
+      return a;
+    })
+    .catch(() => {
+      analysisJobs.delete(mediaId);
+      return null;
+    });
+  analysisJobs.set(mediaId, p);
+  return p;
+}
+
+/**
+ * Energy of a band at timeline time `t`, 0..1. `smooth` 0 = raw, 1 = fully
+ * enveloped (0.5 blends the two). `floor` sets how much the effect idles at
+ * when the track is quiet, so a reactive effect still has a base look.
+ */
+export function bandEnergy(mediaId: string | null | undefined, band: Band, t: number, smooth = 0.5, floor = 0): number {
+  const a = musicAnalysis(mediaId);
+  if (!a) return 0;
+  if (band === 'hit') {
+    const v = sampleArr(a.hit, t, a.rate);
+    return clamp01(floor + (1 - floor) * v);
+  }
+  const raw = sampleArr(a.raw[band], t, a.rate);
+  const env = sampleArr(a.env[band], t, a.rate);
+  const v = raw + (env - raw) * clamp01(smooth);
+  return clamp01(floor + (1 - floor) * v);
+}
+
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+function sampleArr(arr: Float32Array, t: number, rate: number): number {
+  const x = t * rate;
+  if (!(x > 0)) return arr[0] ?? 0;
+  if (x >= arr.length - 1) return arr[arr.length - 1] ?? 0;
+  const i = Math.floor(x);
+  const f = x - i;
+  return (arr[i] ?? 0) * (1 - f) + (arr[i + 1] ?? 0) * f;
+}
+
 export function computePeaks(buf: AudioBuffer, perSec = 100): Float32Array {
   const n = Math.max(1, Math.ceil(buf.duration * perSec));
   const out = new Float32Array(n);
@@ -93,6 +280,8 @@ class AudioEngine {
   register(id: string, buf: AudioBuffer) {
     this.buffers.set(id, buf);
     this.peaks.set(id, computePeaks(buf, 100));
+    // Pre-bake the band envelopes so music-reactive effects are ready to use.
+    if (buf.duration < 900) void ensureMusicAnalysis(id);
   }
 
   start(music: MusicTrack | null, fromT: number, musicClips?: MusicTrack[]) {
