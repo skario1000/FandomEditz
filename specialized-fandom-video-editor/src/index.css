@@ -1,0 +1,125 @@
+@import "tailwindcss";
+@import "@fontsource/anton/latin-400.css";
+@import "@fontsource/archivo-black/latin-400.css";
+@import "@fontsource/bebas-neue/latin-400.css";
+@import "@fontsource/oswald/latin-700.css";
+@import "@fontsource/oswald/latin-300.css";
+@import "@fontsource/permanent-marker/latin-400.css";
+@import "@fontsource/playfair-display/latin-700-italic.css";
+@import "@fontsource/montserrat/latin-300.css";
+@import "@fontsource/montserrat/latin-800.css";
+@import "@fontsource/cinzel/latin-700.css";
+@import "@fontsource/space-mono/latin-700.css";
+
+:root {
+  color-scheme: dark;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: #07070b;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2b2b36 transparent;
+}
+::-webkit-scrollbar {
+  height: 10px;
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b2b36;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ev-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.ev-range:focus {
+  outline: none;
+}
+.ev-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ff2d55 0%, #b026ff var(--p, 50%), #2a2a36 var(--p, 50%));
+}
+.ev-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 45, 85, 0.3);
+}
+.ev-range::-moz-range-track {
+  height: 4px;
+  border-radius: 4px;
+  background: #2a2a36;
+}
+.ev-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 4px;
+  background: #ff2d55;
+}
+.ev-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.logo-glitch {
+  text-shadow: -2px 0 #ff2d55, 2px 0 #22d3ee;
+}
+.logo-glitch:hover {
+  animation: ev-glitch 0.35s steps(2) infinite;
+}
+@keyframes ev-glitch {
+  0% {
+    text-shadow: -2px 0 #ff2d55, 2px 0 #22d3ee;
+  }
+  50% {
+    text-shadow: 3px 1px #ff2d55, -3px -1px #22d3ee;
+  }
+  100% {
+    text-shadow: -1px -1px #ff2d55, 1px 1px #22d3ee;
+  }
+}
+.bg-grid {
+  background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0);
+  background-size: 18px 18px;
+}
+@keyframes ev-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ev-in {
+  animation: ev-in 0.18s ease-out;
+}
+input[type="number"]::-webkit-inner-spin-button {
+  opacity: 0.4;
+}
