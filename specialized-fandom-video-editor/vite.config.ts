@@ -10,6 +10,9 @@ const __dirname = path.dirname(__filename);
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Everything is inlined into one HTML file, so the app has to work from any
+  // subpath — a GitHub Pages project site, a CDN, a USB stick, anywhere.
+  base: "./",
   plugins: [react(), tailwindcss(), viteSingleFile()],
   server: {
     host: true,
